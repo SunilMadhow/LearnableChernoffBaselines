@@ -1,0 +1,267 @@
+"""
+train_value_fn.py
+
+Train a prompt-conditioned value function V(x_t, prompt, t) ≈ E[r(x_0) | x_t, prompt].
+
+Architecture: TransformerCritic from nets_language.py, but the input to distilroberta
+is the joint text:
+    decode(prompt_ids) + " " + decode_masked(x_t)
+where masked tokens are replaced with distilroberta's [MASK] token.
+
+Target: raw Skywork reward (no exponentiation) — we work in reward space, matching the
+v_t - v_{t+1} - tau formulation.
+
+Usage (Colab):
+    !python /content/drive/MyDrive/LCB_cam_ready/prompt_scaled/train_value_fn.py
+"""
+
+from pathlib import Path as _ReleasePath
+_LCB_RELEASE_ROOT = str(_ReleasePath(__file__).resolve().parents[1])
+
+
+import argparse
+import json
+import os
+import sys
+from collections import defaultdict
+from glob import glob
+
+import numpy as np
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from transformers import AutoTokenizer, AutoModel, AutoConfig
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# -------------------------------------------------------------------------
+# Configuration
+# -------------------------------------------------------------------------
+CRITIC_MODEL   = "distilroberta-base"
+LLADA_MODEL_ID = "GSAI-ML/LLaDA-8B-Instruct"
+LLADA_MASK_ID  = 126336
+
+NUM_SAVE_STEPS = 32   # number of timesteps saved per trajectory (t=1..32)
+MAX_SEQ_LEN    = 128  # distilroberta max tokens (prompt ~40 + gen ~50 easily fits)
+
+EPOCHS      = 15
+BATCH_SIZE  = 64
+LR          = 2e-5
+WEIGHT_DECAY = 1e-2
+
+BASE_DIR  = f"{_LCB_RELEASE_ROOT}"
+DATA_DIR  = os.path.join(BASE_DIR, "prompt_scaled", "trajectory_data")
+CKPT_PATH = os.path.join(BASE_DIR, "prompt_scaled", "value_fn.pt")
+META_PATH = os.path.join(BASE_DIR, "prompt_scaled", "value_fn_meta.json")
+# -------------------------------------------------------------------------
+
+
+class ValueDataset(Dataset):
+    """
+    Loads all per-stem trajectory batches and flattens them into (t, s) pairs.
+
+    Each item: (input_ids, t_scalar, reward)
+      input_ids — distilroberta tokens for "[prompt text] [masked gen]"
+      t_scalar  — float in [1/NUM_SAVE_STEPS, 1.0], higher = more masked
+      reward    — raw Skywork float32
+    """
+
+    def __init__(self, data_dir: str, critic_tokenizer, llada_tokenizer, max_seq_len: int = MAX_SEQ_LEN,
+                 train_steps=None):
+        self.critic_tok  = critic_tokenizer
+        self.llada_tok   = llada_tokenizer
+        self.max_seq_len = max_seq_len
+        self.mask_token  = critic_tokenizer.mask_token or "[MASK]"
+        # train_steps: set of diffusion t values (1-indexed) to include; None = all
+        self.train_steps = set(train_steps) if train_steps is not None else None
+
+        meta_files = sorted(glob(os.path.join(data_dir, "*_meta.json")))
+        if not meta_files:
+            raise FileNotFoundError(f"No *_meta.json files found in {data_dir}")
+
+        self.samples = []   # list of (prompt_text, gen_tokens_1d, t_scalar, reward)
+
+        for meta_path in meta_files:
+            batch_id = os.path.basename(meta_path).replace("_meta.json", "")
+            states_path     = os.path.join(data_dir, f"{batch_id}_states.npy")
+            prompt_ids_path = os.path.join(data_dir, f"{batch_id}_prompt_ids.npy")
+            rewards_path    = os.path.join(data_dir, f"{batch_id}_rewards.npy")
+
+            if not (os.path.exists(states_path) and os.path.exists(rewards_path)):
+                print(f"  [skip] missing files for {batch_id}")
+                continue
+
+            with open(meta_path) as f:
+                meta = json.load(f)
+
+            states     = np.load(states_path)      # (NUM_SAVE_STEPS, S, L_gen)
+            prompt_ids = np.load(prompt_ids_path)  # (1, L_prompt)
+            rewards    = np.load(rewards_path)     # (S,)
+
+            n_steps, S, _ = states.shape
+            prompt_text = meta["prompt_text"]
+
+            for t_idx in range(n_steps):
+                # t_idx=0 → t=1 (least masked); t_idx=k → t=k+1 (more masked)
+                t = t_idx + 1
+                if self.train_steps is not None and t not in self.train_steps:
+                    continue
+                t_scalar = float(n_steps - t_idx) / n_steps  # in (0, 1]; robust to any n_steps
+                for s in range(S):
+                    self.samples.append((prompt_text, states[t_idx, s], t_scalar, rewards[s]))
+
+        steps_desc = f"t={sorted(self.train_steps)}" if self.train_steps is not None else "all t"
+        print(f"ValueDataset: {len(self.samples)} (t, s) pairs from {len(meta_files)} batches [{steps_desc}]")
+
+    def __len__(self):
+        return len(self.samples)
+
+    def _transcode(self, prompt_text: str, gen_tokens: np.ndarray) -> str:
+        """Decode LLaDA gen tokens with mask replacement, prepend prompt text."""
+        gen_text = self.llada_tok.decode(gen_tokens.tolist(), skip_special_tokens=False)
+        gen_text = (gen_text
+                    .replace("<|mdm_mask|>", self.mask_token)
+                    .replace("<|endoftext|>", "")
+                    .replace("<|begin_of_text|>", "")
+                    .strip())
+        return prompt_text + " " + gen_text
+
+    def __getitem__(self, idx):
+        prompt_text, gen_tokens, t_scalar, reward = self.samples[idx]
+        joint_text = self._transcode(prompt_text, gen_tokens)
+        enc = self.critic_tok(
+            joint_text,
+            padding="max_length",
+            truncation=True,
+            max_length=self.max_seq_len,
+            return_tensors="pt",
+        )
+        return (
+            enc.input_ids.squeeze(0),
+            torch.tensor(t_scalar, dtype=torch.float32),
+            torch.tensor(reward,   dtype=torch.float32),
+        )
+
+
+# -------------------------------------------------------------------------
+# Model (reuses TransformerCritic pattern from nets_language.py)
+# -------------------------------------------------------------------------
+class PromptConditionedValueFn(nn.Module):
+    def __init__(self, model_name: str = CRITIC_MODEL):
+        super().__init__()
+        config = AutoConfig.from_pretrained(model_name)
+        self.backbone = AutoModel.from_pretrained(model_name, config=config)
+        hidden = config.hidden_size
+
+        self.time_mlp = nn.Sequential(
+            nn.Linear(1, hidden),
+            nn.SiLU(),
+            nn.Linear(hidden, hidden),
+        )
+        self.head = nn.Linear(hidden, 1)
+
+    def forward(self, input_ids: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+        """
+        input_ids: (B, seq_len)
+        t:         (B,)  float in [0.1, 1.0]
+        returns:   (B,)  predicted reward
+        """
+        embeds = self.backbone.embeddings(input_ids=input_ids)      # (B, seq, H)
+        t_emb  = self.time_mlp(t.unsqueeze(-1)).unsqueeze(1)        # (B, 1, H)
+        embeds = embeds + t_emb
+
+        out = self.backbone(inputs_embeds=embeds)
+        cls = out.last_hidden_state[:, 0, :]                         # (B, H)
+        return self.head(cls).squeeze(-1)                             # (B,)
+
+
+# -------------------------------------------------------------------------
+# Main
+# -------------------------------------------------------------------------
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--train_steps", type=int, nargs="+", default=None,
+        help="Diffusion timesteps (1-indexed) to train on. Default: all (1..NUM_SAVE_STEPS).",
+    )
+    args = parser.parse_args()
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Device: {device}")
+    if args.train_steps:
+        print(f"Training on steps: {sorted(args.train_steps)}")
+    else:
+        print(f"Training on all steps (1..{NUM_SAVE_STEPS})")
+
+    print("Loading tokenizers...")
+    llada_tok  = AutoTokenizer.from_pretrained(LLADA_MODEL_ID, trust_remote_code=True)
+    critic_tok = AutoTokenizer.from_pretrained(CRITIC_MODEL)
+
+    print("Building dataset...")
+    dataset = ValueDataset(DATA_DIR, critic_tok, llada_tok, max_seq_len=MAX_SEQ_LEN,
+                           train_steps=args.train_steps)
+    loader  = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
+
+    print("Building model...")
+    model = PromptConditionedValueFn(CRITIC_MODEL).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    criterion = nn.MSELoss()
+
+    best_loss = float("inf")
+    for epoch in range(1, EPOCHS + 1):
+        model.train()
+        total_loss = 0.0
+        t_sq_err = defaultdict(float)
+        t_count  = defaultdict(int)
+
+        for input_ids, t, reward in loader:
+            input_ids = input_ids.to(device)
+            t         = t.to(device)
+            reward    = reward.to(device)
+
+            pred = model(input_ids, t)
+
+            # Per-sample squared errors for per-timestep logging
+            per_sample = (pred - reward) ** 2          # (B,)
+            loss = per_sample.mean()
+
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            total_loss += loss.item()
+
+            # Accumulate per-t_scalar MSE (no grad needed)
+            with torch.no_grad():
+                for t_val, sq in zip(t.cpu().tolist(), per_sample.detach().cpu().tolist()):
+                    key = round(t_val, 1)
+                    t_sq_err[key] += sq
+                    t_count[key]  += 1
+
+        avg_loss = total_loss / len(loader)
+        # t_scalar=1.0 → t=1 (least masked); t_scalar=0.1 → t=10 (most masked)
+        t_mse_str = "  ".join(
+            f"t={key:.1f}:{t_sq_err[key]/t_count[key]:.3f}"
+            for key in sorted(t_sq_err, reverse=True)   # most→least noisy
+        )
+        print(f"[Epoch {epoch:3d}/{EPOCHS}] MSE = {avg_loss:.4f}  |  {t_mse_str}")
+
+        if avg_loss < best_loss:
+            best_loss = avg_loss
+            torch.save(model.state_dict(), CKPT_PATH)
+            print(f"  -> saved checkpoint (best so far)")
+
+    # Save metadata for loading at inference time
+    meta = {
+        "critic_model":   CRITIC_MODEL,
+        "llada_model_id": LLADA_MODEL_ID,
+        "num_save_steps": NUM_SAVE_STEPS,
+        "max_seq_len":    MAX_SEQ_LEN,
+    }
+    with open(META_PATH, "w") as f:
+        json.dump(meta, f, indent=2)
+
+    print(f"\nBest MSE: {best_loss:.4f}")
+    print(f"Checkpoint: {CKPT_PATH}")
+    print(f"Metadata:   {META_PATH}")
+

@@ -1,0 +1,8 @@
+{
+  "critic_model": "distilroberta-base",
+  "llada_model_id": "GSAI-ML/LLaDA-8B-Instruct",
+  "num_save_steps": 32,
+  "max_seq_len": 128,
+  "normalised": true,
+  "min_sigma": 0.1
+}

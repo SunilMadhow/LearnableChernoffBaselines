@@ -1,0 +1,25 @@
+label,metric,mean,ci_lo,ci_hi,n
+rs_0.1,Non-Latin rate,0.21,0.17595000000000008,0.246,500
+rs_0.1,Avg # sentences,2.896,2.856,2.936,500
+rs_0.1,Nonstandard-word rate,0.408,0.36395000000000005,0.454,500
+rs_0.3,Non-Latin rate,0.214,0.18,0.25,500
+rs_0.3,Avg # sentences,2.874,2.82,2.928,500
+rs_0.3,Nonstandard-word rate,0.41,0.366,0.45204999999999973,500
+rs_0.5,Non-Latin rate,0.254,0.2179500000000001,0.29,500
+rs_0.5,Avg # sentences,2.818,2.764,2.872,500
+rs_0.5,Nonstandard-word rate,0.436,0.394,0.48,500
+lcb_0.1,Non-Latin rate,0.186,0.152,0.22,500
+lcb_0.1,Avg # sentences,2.84,2.798,2.882,500
+lcb_0.1,Nonstandard-word rate,0.388,0.348,0.43,500
+lcb_0.3,Non-Latin rate,0.214,0.178,0.25,500
+lcb_0.3,Avg # sentences,2.862,2.82,2.904,500
+lcb_0.3,Nonstandard-word rate,0.392,0.352,0.436,500
+lcb_0.5,Non-Latin rate,0.25,0.21395000000000008,0.286,500
+lcb_0.5,Avg # sentences,2.738,2.676,2.794,500
+lcb_0.5,Nonstandard-word rate,0.468,0.422,0.51,500
+bo2,Non-Latin rate,0.198,0.164,0.23204999999999973,500
+bo2,Avg # sentences,2.882,2.83995,2.924,500
+bo2,Nonstandard-word rate,0.398,0.356,0.44,500
+bo3,Non-Latin rate,0.228,0.19,0.26404999999999973,500
+bo3,Avg # sentences,2.958,2.934,2.982,500
+bo3,Nonstandard-word rate,0.446,0.402,0.492,500

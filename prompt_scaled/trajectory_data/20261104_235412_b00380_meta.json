@@ -1,0 +1,14 @@
+{
+  "batch_id": "20261104_235412_b00380",
+  "stem": "Thank you for your notice of cancellation, but",
+  "prompt_text": "Complete the sentence in a polite but firm tone. Stem: \"Thank you for your notice of cancellation, but\"",
+  "prompt_len": 23,
+  "S": 40,
+  "num_save_steps": 32,
+  "gen_len": 32,
+  "steps": 32,
+  "temperature": 1.12,
+  "remasking": "low_confidence",
+  "mean_reward": 2.718109130859375,
+  "std_reward": 2.2112174034118652
+}

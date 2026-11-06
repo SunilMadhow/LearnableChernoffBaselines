@@ -1,0 +1,6 @@
+-r requirements-analysis.txt
+torch
+transformers==4.57.3
+accelerate
+bitsandbytes
+tqdm

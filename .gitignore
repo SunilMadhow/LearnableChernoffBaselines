@@ -1,0 +1,8 @@
+# Large checkpoints / samples are hosted on Google Drive (see README)
+*.pt
+syntax_reward/data_runs/
+
+__pycache__/
+*.pyc
+.DS_Store
+.ipynb_checkpoints/

@@ -1,0 +1,20 @@
+{
+  "run_id": "20251201_143105_616806",
+  "traj_shape": [
+    20,
+    50000,
+    2
+  ],
+  "reward_shape": [
+    50000
+  ],
+  "core_save": {
+    "id": "20251201_143105_616806",
+    "config": "toy_data_runs/20251201_143105_616806/20251201_143105_616806_config.json",
+    "states": "toy_data_runs/20251201_143105_616806/20251201_143105_616806_states.npy"
+  },
+  "reward_fn": {
+    "name": "reward_func_0",
+    "source": "def reward_func_0(x):\n    return 3*(x[:, 0] < -7).astype(float)\n"
+  }
+}

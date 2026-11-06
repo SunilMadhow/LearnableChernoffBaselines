@@ -1,0 +1,14 @@
+{
+  "batch_id": "20261104_235412_b00382",
+  "stem": "Thank you for your expression of concern, but",
+  "prompt_text": "Complete the sentence in a polite but firm tone. Stem: \"Thank you for your expression of concern, but\"",
+  "prompt_len": 23,
+  "S": 40,
+  "num_save_steps": 32,
+  "gen_len": 32,
+  "steps": 32,
+  "temperature": 1.12,
+  "remasking": "low_confidence",
+  "mean_reward": 0.9003143310546875,
+  "std_reward": 1.7245441675186157
+}

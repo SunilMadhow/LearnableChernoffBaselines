@@ -1,0 +1,14 @@
+{
+  "batch_id": "20261104_235412_b00053",
+  "stem": "Thank you for your leadership, but",
+  "prompt_text": "Complete the sentence in a polite but firm tone. Stem: \"Thank you for your leadership, but\"",
+  "prompt_len": 21,
+  "S": 40,
+  "num_save_steps": 32,
+  "gen_len": 32,
+  "steps": 32,
+  "temperature": 1.12,
+  "remasking": "low_confidence",
+  "mean_reward": 3.967334032058716,
+  "std_reward": 1.6874219179153442
+}

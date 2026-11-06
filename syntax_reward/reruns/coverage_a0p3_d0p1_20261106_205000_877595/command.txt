@@ -1,0 +1,1 @@
+python -u analysis/coverage_experiment.py --run_id 20251224_233551_699407 --lcb_name lcb_lambda_only_max_6_post_trained_temp_0p3 --temp 0.3 --num_samples 50 --num_probes 20 --seed 42 --output_dir "/content/drive/MyDrive/LCB_cam_ready/syntax_reward/reruns/coverage_a0p3_d0p1_20261106_205000_877595"

@@ -1,0 +1,6 @@
+torch
+transformers==4.57.3
+bitsandbytes==0.49.2
+accelerate
+numpy
+matplotlib
